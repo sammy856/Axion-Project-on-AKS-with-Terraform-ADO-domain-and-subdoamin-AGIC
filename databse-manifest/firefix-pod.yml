@@ -1,0 +1,18 @@
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: firefox-pod
+# spec:
+#   selector:
+#     matchLabels:
+#       app: firefox-pod
+#   template:
+#     metadata:
+#       labels:
+#         app: firefox-pod
+#     spec:
+#       containers:
+#       - name: firefox
+#         image: lscr.io/linuxserver/firefox:latest
+#         ports:
+#         - containerPort: 3000
