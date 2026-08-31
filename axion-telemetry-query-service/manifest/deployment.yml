@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: axion-telemetry-query-service-pod
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: axion-telemetry-query-service-pod
+
+  template:
+    metadata:
+      labels:
+        app: axion-telemetry-query-service-pod
+
+      annotations:
+        azure.workload.identity/use: "true"
+
+    spec:
+
+      serviceAccountName: axion-keyvault-sa
+
+      containers:
+        - name: axion-telemetry-query-service-pod
+
+          image: sammyacr.azurecr.io/telemetry-query:v1
+
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8000
+
+          env:
+
+            - name: POSTGRES_HOST
+              value: "postgresql-service"
+
+            - name: POSTGRES_PORT
+              value: "5432"
+
+            - name: POSTGRES_DB
+              value: "postgresdb"
+
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: axion-postgres-secret
+                  key: POSTGRES_USER
+
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: axion-postgres-secret
+                  key: POSTGRES_PASSWORD
+
+            - name: PORT
+              value: "8000"
+
+          volumeMounts:
+            - name: secrets-store
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
+
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+
+            volumeAttributes:
+              secretProviderClass: axion-keyvault-secrets

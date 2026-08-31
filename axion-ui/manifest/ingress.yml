@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+
+metadata:
+  name: axion-ui-ingress
+
+  annotations:
+    appgw.ingress.kubernetes.io/health-probe-path: "/"
+    appgw.ingress.kubernetes.io/health-probe-port: "80"
+    appgw.ingress.kubernetes.io/health-probe-status-codes: "200-399"
+
+spec:
+  ingressClassName: azure-application-gateway
+
+  rules:
+    - host: axion.b18g151.online
+
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+
+            backend:
+              service:
+                name: axion-ui-service
+                port:
+                  number: 80

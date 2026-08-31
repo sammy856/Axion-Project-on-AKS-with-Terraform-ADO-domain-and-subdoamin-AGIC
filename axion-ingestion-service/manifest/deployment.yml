@@ -1,79 +1,56 @@
-# apiVersion: apps/v1
-# kind: Deployment
-# metadata:
-#   name: postgresql-server
-
-# spec:
-#   replicas: 1
-#   selector:
-#     matchLabels:
-#       app: postgresql-server
-
-#   template:
-#     metadata:
-#       labels:
-#         app: postgresql-server
-#     spec:    
-#       containers:
-#       - name: postgresql-server
-#         image: postgres:17.10
-#         ports:
-#           - containerPort: 5432
-#         env:
-#           - name: POSTGRES_USER
-#             value: "admin"
-#           - name: POSTGRES_PASSWORD
-#             value: "admin"
-#           - name: POSTGRES_DB
-#             value: "postgresdb"
-
-
-
-################################
-
-# deployment with secrets from keyvault using secret provider class
-
-
 apiVersion: apps/v1
 kind: Deployment
+
 metadata:
-  name: postgresql-server
+  name: axion-ingestion-pod
 
 spec:
   replicas: 1
 
   selector:
     matchLabels:
-      app: postgresql-server
+      app: axion-ingestion-pod
 
   template:
     metadata:
       labels:
-        app: postgresql-server
+        app: axion-ingestion-pod
         azure.workload.identity/use: "true"
 
     spec:
       serviceAccountName: axion-keyvault-sa
 
       containers:
-        - name: postgresql-server
-          image: postgres:17.10
+        - name: axion-ingestion-pod
+
+          image: sammyacr.azurecr.io/ingestion:v1
+
+          imagePullPolicy: Always
 
           ports:
-            - containerPort: 5432
+            - containerPort: 8000
 
           env:
+            # PostgreSQL username from Key Vault → Kubernetes Secret
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
                   name: axion-postgres-secret
                   key: POSTGRES_USER
 
+            # PostgreSQL password from Key Vault → Kubernetes Secret
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: axion-postgres-secret
                   key: POSTGRES_PASSWORD
+
+            # PostgreSQL Kubernetes Service
+            - name: POSTGRES_HOST
+              value: "postgresql-service"
+
+            - name: POSTGRES_PORT
+              value: "5432"
 
             - name: POSTGRES_DB
               value: "postgresdb"

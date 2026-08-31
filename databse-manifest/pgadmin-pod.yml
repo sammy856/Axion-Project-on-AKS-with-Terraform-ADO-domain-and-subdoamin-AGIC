@@ -1,25 +1,81 @@
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: pgadmin-pod
+# spec:
+#   selector:
+#     matchLabels:
+#       app: pgadmin-pod
+#   template:
+#     metadata:
+#       labels:
+#         app: pgadmin-pod
+#     spec:
+#       containers:
+#       - name: pgadmin-pod
+#         image: dpage/pgadmin4:latest
+
+#         ports:
+#         - containerPort: 80
+#         env:
+#           - name: PGADMIN_DEFAULT_EMAIL
+#             value: "sameersingh856@gmail.com"
+
+#           - name: PGADMIN_DEFAULT_PASSWORD
+#             value: "Sammy@0786" 
+
+#########################
+
+# deployment with secrets from keyvault using secret provider class
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: pgadmin-pod
+
 spec:
   selector:
     matchLabels:
       app: pgadmin-pod
+
   template:
     metadata:
       labels:
         app: pgadmin-pod
+        azure.workload.identity/use: "true"
+
     spec:
+      serviceAccountName: axion-keyvault-sa
+
       containers:
-      - name: pgadmin-pod
-        image: dpage/pgadmin4:latest
+        - name: pgadmin-pod
+          image: dpage/pgadmin4:latest
 
-        ports:
-        - containerPort: 80
-        env:
-          - name: PGADMIN_DEFAULT_EMAIL
-            value: "sameersingh856@gmail.com"
+          ports:
+            - containerPort: 80
 
-          - name: PGADMIN_DEFAULT_PASSWORD
-            value: "Sammy@0786" 
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: axion-pgadmin-secret
+                  key: PGADMIN_DEFAULT_EMAIL
+
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: axion-pgadmin-secret
+                  key: PGADMIN_DEFAULT_PASSWORD
+
+          volumeMounts:
+            - name: secrets-store
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
+
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: axion-keyvault-secrets

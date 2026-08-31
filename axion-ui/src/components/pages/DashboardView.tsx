@@ -7,7 +7,7 @@ import { Throughput } from '../Throughput';
 import { DigitalTwin } from '../DigitalTwin';
 import { ThermalCamera } from '../ThermalCamera';
 
-const API_BASE = 'https://api.axionsystems.de';
+const API_BASE = 'http://telemetry.b18g151.online';
 
 interface DashboardViewProps {
   devices: any[];
