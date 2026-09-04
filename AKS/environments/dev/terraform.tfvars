@@ -1,7 +1,7 @@
 resource_groups_values = {
   rg1 = {
     rgname   = "aks-rg"
-    location = "west us"
+    location = "japan east"
   }
 }
 
@@ -11,7 +11,7 @@ resource_groups_values = {
 aks_clusters_values = {
   cluster = {
     name               = "sammyaks"
-    location           = "west us"
+    location           = "japan east"
     rgname             = "aks-rg"
     dns_prefix         = "sammyaksdns"
     kubernetes_version = "1.34.7"
@@ -24,7 +24,7 @@ aks_clusters_values = {
 acrs_values = {
   acr = {
     name     = "sammyacr"
-    location = "west us"
+    location = "japan east"
     rgname   = "aks-rg"
     sku      = "Basic"
   }
