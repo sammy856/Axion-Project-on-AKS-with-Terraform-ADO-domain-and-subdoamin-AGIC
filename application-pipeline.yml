@@ -1,1 +1,14 @@
 pool: ubuntu-latest
+
+trigger:
+- main
+
+stages:
+  - stage: 
+    displayName: Scanningstage
+    jobs:
+        - job: sacnningjob
+          steps:
+            
+              
+
