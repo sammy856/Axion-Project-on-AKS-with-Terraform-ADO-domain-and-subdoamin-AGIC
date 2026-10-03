@@ -1,14 +1,1355 @@
-pool: ubuntu-latest
+```yaml
+# ============================================================
+# AXION APPLICATION CI/CD PIPELINE
+# ============================================================
+#
+# Flow:
+#
+# PR
+#  |
+#  +--> Build/Test
+#  |
+#  +--> SonarQube
+#  |
+#  +--> Checkmarx
+#  |
+#  +--> Trivy Filesystem
+#  |
+#  +--> Docker Build
+#  |
+#  +--> Trivy Image
+#  |
+#  +--> Prisma Cloud
+#  |
+#  +--> Push to ACR
+#  |
+#  +--> DEV
+#  |
+#  +--> DEV Smoke Test
+#  |
+#  +--> QA Approval
+#  |
+#  +--> QA
+#  |
+#  +--> PROD Approval
+#  |
+#  +--> PROD
+#
+# ============================================================
+
 
 trigger:
-- main
+  branches:
+    include:
+      - main
+      - develop
+
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+
+# ============================================================
+# PARAMETERS
+# ============================================================
+
+parameters:
+
+- name: runUnitTests
+  displayName: Run Unit Tests
+  type: boolean
+  default: true
+
+- name: runCheckmarx
+  displayName: Run Checkmarx
+  type: boolean
+  default: true
+
+- name: runTrivy
+  displayName: Run Trivy
+  type: boolean
+  default: true
+
+- name: runPrisma
+  displayName: Run Prisma Cloud
+  type: boolean
+  default: true
+
+- name: deployDev
+  displayName: Deploy to DEV
+  type: boolean
+  default: true
+
+- name: deployQA
+  displayName: Deploy to QA
+  type: boolean
+  default: false
+
+- name: deployProd
+  displayName: Deploy to PROD
+  type: boolean
+  default: false
+
+
+# ============================================================
+# GLOBAL VARIABLES
+# ============================================================
+
+variables:
+
+# ------------------------------------------------------------
+# Common Variable Group
+# ------------------------------------------------------------
+
+- group: VG-Axion-Common
+
+
+# ------------------------------------------------------------
+# Build
+# ------------------------------------------------------------
+
+- name: imageTag
+  value: '$(Build.BuildId)'
+
+
+# ------------------------------------------------------------
+# Docker repositories
+# ------------------------------------------------------------
+
+- name: UI_IMAGE
+  value: 'axion-ui'
+
+- name: INGESTION_IMAGE
+  value: 'ingestion'
+
+- name: TELEMETRY_IMAGE
+  value: 'telemetry'
+
+- name: SIMULATOR_IMAGE
+  value: 'simulator'
+
+
+# ------------------------------------------------------------
+# ACR
+# ------------------------------------------------------------
+
+- name: ACR_LOGIN_SERVER
+  value: 'sameeracr.azurecr.io'
+
+
+# ============================================================
+# AGENT
+# ============================================================
+
+pool:
+  vmImage: ubuntu-latest
+
+
+# ============================================================
+# STAGE 1
+# BUILD + TEST
+# ============================================================
 
 stages:
-  - stage: 
-    displayName: Scanningstage
-    jobs:
-        - job: sacnningjob
-          steps:
-            
-              
 
+- stage: Build_Test
+
+  displayName: Build and Unit Test
+
+  jobs:
+
+  - job: ApplicationBuild
+
+    displayName: Build Axion Application
+
+    steps:
+
+    - checkout: self
+
+      displayName: Checkout Source
+
+
+    # ========================================================
+    # NODE
+    # ========================================================
+
+    - task: NodeTool@0
+
+      displayName: Install Node.js
+
+      inputs:
+        versionSpec: '22.x'
+
+
+    # ========================================================
+    # UI LINT
+    # ========================================================
+
+    - task: Bash@3
+
+      displayName: UI - Install Dependencies and Lint
+
+      inputs:
+
+        targetType: inline
+
+        script: |
+
+          set -e
+
+          cd axion-ui
+
+          npm ci
+
+          npm run lint
+
+
+    # ========================================================
+    # UI BUILD
+    # ========================================================
+
+    - task: Bash@3
+
+      displayName: UI - Build
+
+      inputs:
+
+        targetType: inline
+
+        script: |
+
+          set -e
+
+          cd axion-ui
+
+          npm run build
+
+
+    # ========================================================
+    # INGESTION TEST
+    # ========================================================
+
+    - task: Bash@3
+
+      displayName: Ingestion Service - Unit Test
+
+      condition: eq('${{ parameters.runUnitTests }}', 'true')
+
+      inputs:
+
+        targetType: inline
+
+        script: |
+
+          set -e
+
+          cd axion-ingestion-service
+
+          python3 -m venv .venv
+
+          source .venv/bin/activate
+
+          pip install --upgrade pip
+
+          pip install -r requirements.txt
+
+          if [ -d tests ]; then
+              pip install pytest
+              pytest -v
+          else
+              echo "No tests directory found."
+          fi
+
+
+    # ========================================================
+    # TELEMETRY TEST
+    # ========================================================
+
+    - task: Bash@3
+
+      displayName: Telemetry Query Service - Unit Test
+
+      condition: eq('${{ parameters.runUnitTests }}', 'true')
+
+      inputs:
+
+        targetType: inline
+
+        script: |
+
+          set -e
+
+          cd axion-telemetry-query-service
+
+          python3 -m venv .venv
+
+          source .venv/bin/activate
+
+          pip install --upgrade pip
+
+          pip install -r requirements.txt
+
+          if [ -d tests ]; then
+              pip install pytest
+              pytest -v
+          else
+              echo "No tests directory found."
+          fi
+
+
+    # ========================================================
+    # SIMULATOR TEST
+    # ========================================================
+
+    - task: Bash@3
+
+      displayName: Simulator - Unit Test
+
+      condition: eq('${{ parameters.runUnitTests }}', 'true')
+
+      inputs:
+
+        targetType: inline
+
+        script: |
+
+          set -e
+
+          cd axion-data-simulator
+
+          python3 -m venv .venv
+
+          source .venv/bin/activate
+
+          pip install --upgrade pip
+
+          pip install -r requirements.txt
+
+          if [ -d tests ]; then
+              pip install pytest
+              pytest -v
+          else
+              echo "No tests directory found."
+          fi
+
+
+# ============================================================
+# STAGE 2
+# SONARQUBE
+# ============================================================
+
+- stage: SonarQube
+
+  displayName: SonarQube Code Quality
+
+  dependsOn:
+    - Build_Test
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: SonarQubeScan
+
+    displayName: SonarQube Analysis
+
+    steps:
+
+    - checkout: self
+
+      fetchDepth: 0
+
+
+    # --------------------------------------------------------
+    # Prepare
+    # --------------------------------------------------------
+
+    - task: SonarQubePrepare@8
+
+      displayName: Prepare SonarQube Analysis
+
+      inputs:
+
+        SonarQube: 'SC-Axion-SonarQube'
+
+        scannerMode: 'cli'
+
+        configMode: 'manual'
+
+        cliProjectKey: 'axion-platform'
+
+        cliProjectName: 'Axion Platform'
+
+        cliSources: '.'
+
+
+    # --------------------------------------------------------
+    # Analyze
+    # --------------------------------------------------------
+
+    - task: SonarQubeAnalyze@8
+
+      displayName: Run SonarQube Analysis
+
+
+    # --------------------------------------------------------
+    # Quality Gate
+    # --------------------------------------------------------
+
+    - task: SonarQubePublish@8
+
+      displayName: Publish SonarQube Quality Gate
+
+      inputs:
+
+        pollingTimeoutSec: '300'
+
+
+# ============================================================
+# STAGE 3
+# CHECKMARX
+# ============================================================
+
+- stage: Checkmarx
+
+  displayName: Checkmarx Security Scan
+
+  dependsOn:
+    - SonarQube
+
+  condition: and(
+    succeeded(),
+    eq('${{ parameters.runCheckmarx }}', 'true')
+    )
+
+  jobs:
+
+  - job: CheckmarxScan
+
+    displayName: Checkmarx One
+
+    steps:
+
+    - checkout: self
+
+
+    # ========================================================
+    # CHECKMARX OFFICIAL EXTENSION
+    # ========================================================
+    #
+    # Add the official Checkmarx AST extension to ADO.
+    #
+    # Pipeline:
+    # Edit -> + -> Show assistant -> Checkmarx AST
+    #
+    # Use the generated task from the installed extension.
+    #
+    # Do NOT invent task inputs manually.
+    #
+    # ========================================================
+
+
+    - script: |
+        echo "Checkmarx official extension must be configured here."
+        echo "Use Azure DevOps Show Assistant -> Checkmarx AST."
+      displayName: Checkmarx Configuration Placeholder
+
+
+# ============================================================
+# STAGE 4
+# TRIVY FILESYSTEM
+# ============================================================
+
+- stage: Trivy_Filesystem
+
+  displayName: Trivy Filesystem Security
+
+  dependsOn:
+    - SonarQube
+    - Checkmarx
+
+  condition: and(
+    succeeded(),
+    eq('${{ parameters.runTrivy }}', 'true')
+    )
+
+  jobs:
+
+  - job: TrivyFS
+
+    displayName: Trivy Filesystem Scan
+
+    steps:
+
+    - checkout: self
+
+
+    - task: trivy@2
+
+      displayName: Trivy Filesystem Scan
+
+      inputs:
+
+        type: 'filesystem'
+
+        target: '.'
+
+        scanners: 'vuln,misconfig,secret'
+
+        severities: 'HIGH,CRITICAL'
+
+        exitCode: '1'
+
+
+# ============================================================
+# STAGE 5
+# DOCKER BUILD
+# ============================================================
+
+- stage: Docker_Build
+
+  displayName: Docker Image Build
+
+  dependsOn:
+    - Trivy_Filesystem
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: BuildImages
+
+    displayName: Build All Docker Images
+
+    steps:
+
+    - checkout: self
+
+
+    # ========================================================
+    # UI IMAGE
+    # ========================================================
+
+    - task: Docker@2
+
+      displayName: Build UI Docker Image
+
+      inputs:
+
+        command: build
+
+        containerRegistry: 'SC-Axion-ACR'
+
+        repository: '$(UI_IMAGE)'
+
+        Dockerfile: '$(Build.SourcesDirectory)/axion-ui/Dockerfile'
+
+        buildContext: '$(Build.SourcesDirectory)/axion-ui'
+
+        tags: |
+          $(imageTag)
+
+
+    # ========================================================
+    # INGESTION IMAGE
+    # ========================================================
+
+    - task: Docker@2
+
+      displayName: Build Ingestion Docker Image
+
+      inputs:
+
+        command: build
+
+        containerRegistry: 'SC-Axion-ACR'
+
+        repository: '$(INGESTION_IMAGE)'
+
+        Dockerfile: '$(Build.SourcesDirectory)/axion-ingestion-service/Dockerfile'
+
+        buildContext: '$(Build.SourcesDirectory)/axion-ingestion-service'
+
+        tags: |
+          $(imageTag)
+
+
+    # ========================================================
+    # TELEMETRY IMAGE
+    # ========================================================
+
+    - task: Docker@2
+
+      displayName: Build Telemetry Docker Image
+
+      inputs:
+
+        command: build
+
+        containerRegistry: 'SC-Axion-ACR'
+
+        repository: '$(TELEMETRY_IMAGE)'
+
+        Dockerfile: '$(Build.SourcesDirectory)/axion-telemetry-query-service/Dockerfile'
+
+        buildContext: '$(Build.SourcesDirectory)/axion-telemetry-query-service'
+
+        tags: |
+          $(imageTag)
+
+
+    # ========================================================
+    # SIMULATOR IMAGE
+    # ========================================================
+
+    - task: Docker@2
+
+      displayName: Build Simulator Docker Image
+
+      inputs:
+
+        command: build
+
+        containerRegistry: 'SC-Axion-ACR'
+
+        repository: '$(SIMULATOR_IMAGE)'
+
+        Dockerfile: '$(Build.SourcesDirectory)/axion-data-simulator/Dockerfile'
+
+        buildContext: '$(Build.SourcesDirectory)/axion-data-simulator'
+
+        tags: |
+          $(imageTag)
+
+
+# ============================================================
+# STAGE 6
+# TRIVY IMAGE SCAN
+# ============================================================
+
+- stage: Trivy_Image
+
+  displayName: Trivy Container Image Scan
+
+  dependsOn:
+    - Docker_Build
+
+  condition: and(
+    succeeded(),
+    eq('${{ parameters.runTrivy }}', 'true')
+    )
+
+  jobs:
+
+  - job: ScanImages
+
+    displayName: Scan Docker Images
+
+    steps:
+
+    - task: trivy@2
+
+      displayName: Scan UI Image
+
+      inputs:
+
+        type: 'image'
+
+        target: '$(UI_IMAGE):$(imageTag)'
+
+        scanners: 'vuln,secret'
+
+        severities: 'HIGH,CRITICAL'
+
+        exitCode: '1'
+
+
+    - task: trivy@2
+
+      displayName: Scan Ingestion Image
+
+      inputs:
+
+        type: 'image'
+
+        target: '$(INGESTION_IMAGE):$(imageTag)'
+
+        scanners: 'vuln,secret'
+
+        severities: 'HIGH,CRITICAL'
+
+        exitCode: '1'
+
+
+    - task: trivy@2
+
+      displayName: Scan Telemetry Image
+
+      inputs:
+
+        type: 'image'
+
+        target: '$(TELEMETRY_IMAGE):$(imageTag)'
+
+        scanners: 'vuln,secret'
+
+        severities: 'HIGH,CRITICAL'
+
+        exitCode: '1'
+
+
+    - task: trivy@2
+
+      displayName: Scan Simulator Image
+
+      inputs:
+
+        type: 'image'
+
+        target: '$(SIMULATOR_IMAGE):$(imageTag)'
+
+        scanners: 'vuln,secret'
+
+        severities: 'HIGH,CRITICAL'
+
+        exitCode: '1'
+
+
+# ============================================================
+# STAGE 7
+# PRISMA CLOUD
+# ============================================================
+
+- stage: Prisma
+
+  displayName: Prisma Cloud Security
+
+  dependsOn:
+    - Trivy_Image
+
+  condition: and(
+    succeeded(),
+    eq('${{ parameters.runPrisma }}', 'true')
+    )
+
+  jobs:
+
+  - job: PrismaScan
+
+    displayName: Prisma Cloud Image Scan
+
+    steps:
+
+    - script: |
+        echo "Configure Prisma Cloud official extension here."
+        echo "ADO -> Project Settings -> Extensions -> Prisma Cloud Compute"
+        echo "Then use Pipeline -> Show Assistant -> Prisma Cloud."
+      displayName: Prisma Cloud Configuration Placeholder
+
+
+# ============================================================
+# STAGE 8
+# PUSH IMAGES TO ACR
+# ============================================================
+
+- stage: Push_ACR
+
+  displayName: Push Approved Images to ACR
+
+  dependsOn:
+    - Trivy_Image
+    - Prisma
+
+  condition: succeeded()
+
+  jobs:
+
+  - job: PushImages
+
+    displayName: Push Docker Images
+
+    steps:
+
+
+    # ========================================================
+    # UI
+    # ========================================================
+
+    - task: Docker@2
+
+      displayName: Push UI Image
+
+      inputs:
+
+        command: push
+
+        containerRegistry: 'SC-Axion-ACR'
+
+        repository: '$(UI_IMAGE)'
+
+        tags: |
+          $(imageTag)
+
+
+    # ========================================================
+    # INGESTION
+    # ========================================================
+
+    - task: Docker@2
+
+      displayName: Push Ingestion Image
+
+      inputs:
+
+        command: push
+
+        containerRegistry: 'SC-Axion-ACR'
+
+        repository: '$(INGESTION_IMAGE)'
+
+        tags: |
+          $(imageTag)
+
+
+    # ========================================================
+    # TELEMETRY
+    # ========================================================
+
+    - task: Docker@2
+
+      displayName: Push Telemetry Image
+
+      inputs:
+
+        command: push
+
+        containerRegistry: 'SC-Axion-ACR'
+
+        repository: '$(TELEMETRY_IMAGE)'
+
+        tags: |
+          $(imageTag)
+
+
+    # ========================================================
+    # SIMULATOR
+    # ========================================================
+
+    - task: Docker@2
+
+      displayName: Push Simulator Image
+
+      inputs:
+
+        command: push
+
+        containerRegistry: 'SC-Axion-ACR'
+
+        repository: '$(SIMULATOR_IMAGE)'
+
+        tags: |
+          $(imageTag)
+
+
+# ============================================================
+# STAGE 9
+# DEPLOY DEV
+# ============================================================
+
+- stage: Deploy_DEV
+
+  displayName: Deploy to DEV
+
+  dependsOn:
+    - Push_ACR
+
+  condition: and(
+    succeeded(),
+    eq('${{ parameters.deployDev }}', 'true')
+    )
+
+  variables:
+
+  - group: VG-Axion-Dev
+
+  jobs:
+
+  - deployment: DeployDEV
+
+    displayName: Deploy Axion to DEV
+
+    environment: 'Axion-DEV'
+
+    strategy:
+
+      runOnce:
+
+        deploy:
+
+          steps:
+
+
+          # ==================================================
+          # UI
+          # ==================================================
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy UI
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-ui/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-ui/manifest/service.yml
+                $(Build.SourcesDirectory)/axion-ui/manifest/ingress.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(UI_IMAGE):$(imageTag)
+
+
+          # ==================================================
+          # INGESTION
+          # ==================================================
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy Ingestion Service
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-ingestion-service/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-ingestion-service/manifest/service.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(INGESTION_IMAGE):$(imageTag)
+
+
+          # ==================================================
+          # TELEMETRY
+          # ==================================================
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy Telemetry Query Service
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/service.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/HPA.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/Ingress/ingress.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(TELEMETRY_IMAGE):$(imageTag)
+
+
+          # ==================================================
+          # DATA SIMULATOR
+          # ==================================================
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy Data Simulator
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-data-simulator/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-data-simulator/manifest/service.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(SIMULATOR_IMAGE):$(imageTag)
+
+
+# ============================================================
+# STAGE 10
+# DEV SMOKE TEST
+# ============================================================
+
+- stage: DEV_Smoke_Test
+
+  displayName: DEV Smoke Test
+
+  dependsOn:
+    - Deploy_DEV
+
+  condition: succeeded()
+
+  variables:
+
+  - group: VG-Axion-Dev
+
+  jobs:
+
+  - job: SmokeTest
+
+    displayName: Validate DEV
+
+    steps:
+
+    - task: AzureCLI@2
+
+      displayName: Check DEV AKS Resources
+
+      inputs:
+
+        azureSubscription: 'SC-Axion-Azure'
+
+        scriptType: bash
+
+        scriptLocation: inlineScript
+
+        inlineScript: |
+
+          set -e
+
+          az aks get-credentials \
+            --resource-group "$(AKS_RESOURCE_GROUP)" \
+            --name "$(AKS_CLUSTER_NAME)" \
+            --overwrite-existing
+
+          echo "===== PODS ====="
+
+          kubectl get pods \
+            -n "$(AKS_NAMESPACE)"
+
+          echo "===== DEPLOYMENTS ====="
+
+          kubectl get deployments \
+            -n "$(AKS_NAMESPACE)"
+
+          echo "===== SERVICES ====="
+
+          kubectl get services \
+            -n "$(AKS_NAMESPACE)"
+
+          echo "===== HPA ====="
+
+          kubectl get hpa \
+            -n "$(AKS_NAMESPACE)" || true
+
+          echo "===== INGRESS ====="
+
+          kubectl get ingress \
+            -n "$(AKS_NAMESPACE)" || true
+
+
+# ============================================================
+# STAGE 11
+# QA
+# ============================================================
+
+- stage: Deploy_QA
+
+  displayName: Deploy to QA
+
+  dependsOn:
+    - DEV_Smoke_Test
+
+  condition: and(
+    succeeded(),
+    eq('${{ parameters.deployQA }}', 'true')
+    )
+
+  variables:
+
+  - group: VG-Axion-QA
+
+  jobs:
+
+  - deployment: DeployQA
+
+    displayName: Deploy Axion to QA
+
+    environment: 'Axion-QA'
+
+    strategy:
+
+      runOnce:
+
+        deploy:
+
+          steps:
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy UI to QA
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-ui/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-ui/manifest/service.yml
+                $(Build.SourcesDirectory)/axion-ui/manifest/ingress.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(UI_IMAGE):$(imageTag)
+
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy Ingestion to QA
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-ingestion-service/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-ingestion-service/manifest/service.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(INGESTION_IMAGE):$(imageTag)
+
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy Telemetry to QA
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/service.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/HPA.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/Ingress/ingress.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(TELEMETRY_IMAGE):$(imageTag)
+
+
+# ============================================================
+# STAGE 12
+# PROD
+# ============================================================
+
+- stage: Deploy_PROD
+
+  displayName: Deploy to Production
+
+  dependsOn:
+    - Deploy_QA
+
+  condition: and(
+    succeeded(),
+    eq('${{ parameters.deployProd }}', 'true'),
+    eq(variables['Build.SourceBranch'], 'refs/heads/main')
+    )
+
+  variables:
+
+  - group: VG-Axion-Prod
+
+  jobs:
+
+  - deployment: DeployPROD
+
+    displayName: Deploy Axion to Production
+
+    environment: 'Axion-PROD'
+
+    strategy:
+
+      runOnce:
+
+        deploy:
+
+          steps:
+
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy UI to Production
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-ui/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-ui/manifest/service.yml
+                $(Build.SourcesDirectory)/axion-ui/manifest/ingress.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(UI_IMAGE):$(imageTag)
+
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy Ingestion to Production
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-ingestion-service/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-ingestion-service/manifest/service.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(INGESTION_IMAGE):$(imageTag)
+
+
+          - task: KubernetesManifest@1
+
+            displayName: Deploy Telemetry to Production
+
+            inputs:
+
+              action: deploy
+
+              connectionType: kubernetesServiceConnection
+
+              kubernetesServiceConnection: 'SC-Axion-AKS'
+
+              namespace: '$(AKS_NAMESPACE)'
+
+              manifests: |
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/deployment.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/service.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/manifest/HPA.yml
+                $(Build.SourcesDirectory)/axion-telemetry-query-service/Ingress/ingress.yml
+
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(TELEMETRY_IMAGE):$(imageTag)
+
+
+# ============================================================
+# STAGE 13
+# PROD HEALTH CHECK
+# ============================================================
+
+- stage: PROD_Health_Check
+
+  displayName: Production Health Check
+
+  dependsOn:
+    - Deploy_PROD
+
+  condition: succeeded()
+
+  variables:
+
+  - group: VG-Axion-Prod
+
+  jobs:
+
+  - job: HealthCheck
+
+    displayName: Validate Production
+
+    steps:
+
+    - task: AzureCLI@2
+
+      displayName: Production AKS Validation
+
+      inputs:
+
+        azureSubscription: 'SC-Axion-Azure'
+
+        scriptType: bash
+
+        scriptLocation: inlineScript
+
+        inlineScript: |
+
+          set -e
+
+          az aks get-credentials \
+            --resource-group "$(AKS_RESOURCE_GROUP)" \
+            --name "$(AKS_CLUSTER_NAME)" \
+            --overwrite-existing
+
+          echo "===== PODS ====="
+
+          kubectl get pods \
+            -n "$(AKS_NAMESPACE)"
+
+          echo "===== DEPLOYMENTS ====="
+
+          kubectl get deployments \
+            -n "$(AKS_NAMESPACE)"
+
+          echo "===== SERVICES ====="
+
+          kubectl get services \
+            -n "$(AKS_NAMESPACE)"
+
+          echo "===== INGRESS ====="
+
+          kubectl get ingress \
+            -n "$(AKS_NAMESPACE)"
+```
