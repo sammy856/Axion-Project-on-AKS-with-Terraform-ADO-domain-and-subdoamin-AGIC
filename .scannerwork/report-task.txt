@@ -1,0 +1,6 @@
+projectKey=sammy-project
+serverUrl=http://74.226.60.91:9000
+serverVersion=26.9.0.129388
+dashboardUrl=http://74.226.60.91:9000/dashboard?id=sammy-project
+ceTaskId=73c83764-511c-4daa-9559-2ea8262ff602
+ceTaskUrl=http://74.226.60.91:9000/api/ce/task?id=73c83764-511c-4daa-9559-2ea8262ff602

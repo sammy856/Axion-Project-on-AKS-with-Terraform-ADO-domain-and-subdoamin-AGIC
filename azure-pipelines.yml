@@ -1,124 +1,194 @@
-trigger:
-  none
+# With env parameters for deployment in different env subscription  with single pipeline
+
+
+trigger: none
+pr: none
+
+parameters:
+  - name: environment
+    displayName: Select Environment
+    type: string
+    default: dev
+    values:
+      - dev
+      - uat
 
 pool:
   vmImage: ubuntu-latest
 
 variables:
+  - name: TF_VERSION
+    value: '1.15.6'
 
-  WORKING_DIR: '$(System.DefaultWorkingDirectory)/AKS/environments/dev' 
-  TF_VERSION: '1.15.6' 
-  resourceGroupName: 'donotdeletemygroup' 
-  storageAccountName: 'donotdeletemystoragebhai'
-  containerName: 'mycontainer'
-  backendKey: 'dev.terraform.tfstate'
-  aksClusterName: 'sammyaks' 
-  acrName: 'sameeracr' 
-  acrLoginServer: 'sameeracr.azurecr.io' 
-  imageRepository: 'microtodo-app' 
-  imageTag: '$(Build.BuildId)' 
-  kubernetesNamespace: 'dev'
-  TF_PLAN_NAME: 'tfplan'
-  service_connection: 'myazserviceconnection'
-  subscription_id: '1b27db03-81b0-4e64-9cd9-e87934f35ca4'
-  INFRACOST_API_KEY: 'ico-nZLVnsskPMmX9DG56f27NWu6b8a5lbfr'
+  # Shared Terraform backend configuration
+  - name: resourceGroupName
+    value: 'YOUR-TFSTATE-RESOURCE-GROUP'
 
+  - name: storageAccountName
+    value: 'YOUR-TFSTATE-STORAGE-ACCOUNT'
 
+  - name: containerName
+    value: 'mycontainer'
+
+  # Select DEV configuration
+  - ${{ if eq(parameters.environment, 'dev') }}:
+      - name: WORKING_DIR
+        value: '$(System.DefaultWorkingDirectory)/AKS/environments/dev'
+
+      - name: backendKey
+        value: 'dev.terraform.tfstate'
+
+      - name: service_connection
+        value: 'myazserviceconnection-dev'
+
+      - name: aksClusterName
+        value: 'sammyaks'
+
+      - name: acrName
+        value: 'sameeracr'
+
+      - name: acrLoginServer
+        value: 'sameeracr.azurecr.io'
+
+      - name: imageRepository
+        value: 'microtodo-app'
+
+      - name: kubernetesNamespace
+        value: 'dev'
+
+  # Select UAT configuration
+  - ${{ if eq(parameters.environment, 'uat') }}:
+      - name: WORKING_DIR
+        value: '$(System.DefaultWorkingDirectory)/AKS/environments/uat'
+
+      - name: backendKey
+        value: 'uat.terraform.tfstate'
+
+      - name: service_connection
+        value: 'myazserviceconnection-uat'
+
+      - name: aksClusterName
+        value: 'sammyaks-uat'
+
+      - name: acrName
+        value: 'sameeracr'
+
+      - name: acrLoginServer
+        value: 'sameeracr.azurecr.io'
+
+      - name: imageRepository
+        value: 'microtodo-app'
+
+      - name: kubernetesNamespace
+        value: 'uat'
+
+  - name: imageTag
+    value: '$(Build.BuildId)'
+
+  - name: TF_PLAN_NAME
+    value: 'tfplan'
 
 stages:
-  - stage: securityandcompliancecheck
+
+  # ==========================================
+  # STAGE 1: SECURITY AND COMPLIANCE
+  # ==========================================
+  - stage: SecurityAndCompliance
+    displayName: Security and Compliance
+
     jobs:
       - job: SecurityScanJob
-        displayName: Security Scan Job
+        displayName: Run Terraform Security Scans
+
         steps:
+          - checkout: self
+
           - task: TerraformInstaller@1
             inputs:
               terraformVersion: '$(TF_VERSION)'
 
           - task: Bash@3
-            displayName: 'Install TFLint'
+            displayName: Install TFLint
             inputs:
-              targetType: 'inline'
+              targetType: inline
               script: |
+                set -e
                 curl -sSLO https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip
                 unzip -o tflint_linux_amd64.zip
-                sudo install -c -v tflint /usr/local/bin/ 
+                sudo install -c -v tflint /usr/local/bin/
 
           - task: Bash@3
-            displayName: 'Install Checkov'
+            displayName: Install Checkov
             inputs:
-              targetType: 'inline'
+              targetType: inline
               script: |
-                python3 -m pip install --upgrade pip
-                pip3 install checkov
+                set -e
+                python3 -m pip install --user checkov
+                echo "##vso[task.prependpath]$HOME/.local/bin"
 
           - task: Gitleaks@3
             displayName: Gitleaks Scan
             continueOnError: true
             inputs:
               scanlocation: '$(System.DefaultWorkingDirectory)'
-              configtype: 'default'
-              reportformat: 'sarif'
-              reportname: 'gitleaks.sarif'
-
-
-                
-          - task: Bash@3
-            displayName: 'Run TFLint Scan'
-            continueOnError: true
-            inputs:
-              targetType: 'inline'
-              script: |
-                tflint --chdir=$(System.DefaultWorkingDirectory) --recursive       
+              configtype: default
+              reportformat: sarif
+              reportname: gitleaks.sarif
 
           - task: Bash@3
-            displayName: 'Run Checkov Scan'
+            displayName: Run TFLint
             continueOnError: true
             inputs:
-              targetType: 'inline'
+              targetType: inline
               script: |
-                checkov -d $(System.DefaultWorkingDirectory) \
+                tflint --chdir="$(WORKING_DIR)" --recursive
+
+          - task: Bash@3
+            displayName: Run Checkov
+            continueOnError: true
+            inputs:
+              targetType: inline
+              script: |
+                checkov -d "$(WORKING_DIR)" \
                   --framework terraform \
-                  -o junitxml > Checkov-Result.xml      
+                  -o junitxml > Checkov-Result.xml
 
           - task: PublishTestResults@2
-            displayName: 'Publish Checkov Results'
+            displayName: Publish Checkov Results
+            condition: always()
             inputs:
-              testResultsFormat: 'JUnit'
-              testResultsFiles: 'Checkov-Result.xml'
+              testResultsFormat: JUnit
+              testResultsFiles: Checkov-Result.xml
               failTaskOnFailedTests: false
 
-# ============================================================
-# Stage 2 - Terraform Plan
-# ============================================================
+  # ==========================================
+  # STAGE 2: TERRAFORM PLAN
+  # ==========================================
+  - stage: TerraformPlan
+    displayName: Terraform Init Validate and Plan
+    dependsOn: SecurityAndCompliance
 
-  - stage: TerraformInitializationandPlanningStage
-    displayName: Terraform Initialization & Planning Stage
     jobs:
-      - job:  TerraformInitializationandPlanningJob
-        displayName: Terraform Initialization & Planning Job
+      - job: TerraformPlanJob
+        displayName: Generate Terraform Plan
+
         steps:
+          - checkout: self
+
           - task: TerraformInstaller@1
             inputs:
               terraformVersion: '$(TF_VERSION)'
 
-          - task: Bash@3
-            displayName: 'Install Infracost'
-            inputs:
-              targetType: 'inline'
-              script: |
-                curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
-                infracost --version               
-
-              
+          # Backend connection accesses state storage.
+          # Target service connection authenticates Terraform provider.
           - task: TerraformTask@5
             displayName: Terraform Init
             inputs:
-              provider: 'azurerm'
-              command: 'init'
-              workingDirectory: $(WORKING_DIR)
-              backendServiceArm: '$(service_connection)'
-              backendAzureRmOverrideSubscriptionID: $(subscription_id)
+              provider: azurerm
+              command: init
+              workingDirectory: '$(WORKING_DIR)'
+              backendServiceArm: 'myazbackendconnection'
+              backendAzureRmOverrideSubscriptionID: '$(BACKEND_SUBSCRIPTION_ID)'
               backendAzureRmResourceGroupName: '$(resourceGroupName)'
               backendAzureRmStorageAccountName: '$(storageAccountName)'
               backendAzureRmContainerName: '$(containerName)'
@@ -127,106 +197,355 @@ stages:
           - task: TerraformTask@5
             displayName: Terraform Validate
             inputs:
-              provider: 'azurerm'
-              command: 'validate'
-              workingDirectory: $(WORKING_DIR)
+              provider: azurerm
+              command: validate
+              workingDirectory: '$(WORKING_DIR)'
 
           - task: TerraformTask@5
-            displayName: 'Terraform Plan'
+            displayName: Terraform Plan
             inputs:
-              provider: 'azurerm'
-              command: 'plan'
+              provider: azurerm
+              command: plan
               workingDirectory: '$(WORKING_DIR)'
               environmentServiceNameAzureRM: '$(service_connection)'
-              commandOptions: '-out=$(System.DefaultWorkingDirectory)/AKS/$(TF_PLAN_NAME)'
+              commandOptions: '-out=$(Build.ArtifactStagingDirectory)/tfplan'
 
           - task: PublishPipelineArtifact@1
-            displayName: 'Publish Terraform Plan Artifact'
+            displayName: Publish Terraform Plan
             inputs:
-              targetPath: '$(System.DefaultWorkingDirectory)/AKS/$(TF_PLAN_NAME)'
-              artifact: 'terraform-plan'
-              publishLocation: 'pipeline'
+              targetPath: '$(Build.ArtifactStagingDirectory)/tfplan'
+              artifact: terraform-plan
+              publishLocation: pipeline
 
           - task: Bash@3
-            displayName: 'Run Infrastructure Cost'
+            displayName: Install Infracost
             inputs:
-              targetType: 'inline'
+              targetType: inline
+              script: |
+                set -e
+                curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+                infracost --version
+
+          - task: Bash@3
+            displayName: Estimate Infrastructure Cost
+            inputs:
+              targetType: inline
               script: |
                 infracost breakdown \
                   --path "$(WORKING_DIR)" \
                   --format table
             env:
-              INFRACOST_API_KEY: $(INFRACOST_API_KEY)                             
+              INFRACOST_API_KEY: $(INFRACOST_API_KEY)
 
-# ============================================================
-# Stage 3 - Terraform Apply
-# ============================================================
+  # ==========================================
+  # STAGE 3: APPROVAL AND APPLY
+  # ==========================================
+  - stage: TerraformApply
+    displayName: Deploy ${{ upper(parameters.environment) }}
+    dependsOn: TerraformPlan
 
-  - stage: TerraformApplyStage
-    displayName: 'Terraform Infrastructure Deployment'
-    dependsOn: TerraformInitializationandPlanningStage
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    # Retains your original main-branch deployment restriction.
+    condition: and(
+      succeeded(),
+      eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
 
     jobs:
-
-    # ==========================================================
-    # Manual Approval
-    # ==========================================================
-    - job: ManualApproval
-      displayName: 'Infrastructure Change Approval'
-      pool: server
-
-      steps:
-      - task: ManualValidation@0
-        displayName: 'Review Terraform Plan'
+      - job: ManualApproval
+        displayName: Approve Infrastructure Changes
+        pool: server
         timeoutInMinutes: 1440
-        inputs:
-          notifyUsers: |
-            benamikumar@gmail.com
-          instructions: |
-            Please review Terraform plan output and approve deployment.
-          onTimeout: reject
 
-    # ==========================================================
-    # Terraform Apply
-    # ==========================================================
-    - job: TerraformApplyJob
-      displayName: 'Apply Approved Infrastructure Changes'
-      dependsOn: ManualApproval
+        steps:
+          - task: ManualValidation@0
+            displayName: Review and Approve Terraform Plan
+            timeoutInMinutes: 1440
+            inputs:
+              notifyUsers: |
+                benamikumar@gmail.com
+              instructions: |
+                Review the Terraform plan artifact.
+                Environment: ${{ parameters.environment }}
+                Approve only if the selected subscription,
+                resource changes and environment are correct.
+              onTimeout: reject
 
-      steps:
+      - job: TerraformApplyJob
+        displayName: Apply Approved Plan
+        dependsOn: ManualApproval
 
-      - task: TerraformInstaller@1
-        displayName: 'Install Terraform CLI'
-        inputs:
-          terraformVersion: $(TF_VERSION)
+        steps:
+          - checkout: self
 
-      - task: TerraformTask@5
-        inputs:
-          provider: 'azurerm'
-          command: 'init'
-          workingDirectory: '$(WORKING_DIR)'
-          backendServiceArm: '$(service_connection)'
-          backendAzureRmOverrideSubscriptionID: '712eeec0-3f6b-4702-8f88-dbfca33db4d0'
-          backendAzureRmResourceGroupName: '$(resourceGroupName)'
-          backendAzureRmStorageAccountName: '$(storageAccountName)'
-          backendAzureRmContainerName: '$(containerName)'
-          backendAzureRmKey: '$(backendKey)'
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: '$(TF_VERSION)'
 
-      - task: DownloadPipelineArtifact@2
-        displayName: 'Download Terraform Plan Artifact'
-        inputs:
-          artifact: 'terraform-plan'
-          path: '$(Pipeline.Workspace)/terraform-plan'
+          # Initialize the SAME backend and state key used in Plan.
+          - task: TerraformTask@5
+            displayName: Terraform Init for Apply
+            inputs:
+              provider: azurerm
+              command: init
+              workingDirectory: '$(WORKING_DIR)'
+              backendServiceArm: 'myazbackendconnection'
+              backendAzureRmOverrideSubscriptionID: '$(BACKEND_SUBSCRIPTION_ID)'
+              backendAzureRmResourceGroupName: '$(resourceGroupName)'
+              backendAzureRmStorageAccountName: '$(storageAccountName)'
+              backendAzureRmContainerName: '$(containerName)'
+              backendAzureRmKey: '$(backendKey)'
 
-      - task: TerraformTask@5
-        displayName: 'Apply Approved Terraform Plan'
-        inputs:
-          provider: 'azurerm'
-          command: 'applyy'
-          workingDirectory: $(WORKING_DIR)
-          environmentServiceNameAzureRM: '$(service_connection)'
-          commandOptions: '$(Pipeline.Workspace)/terraform-plan/$(TF_PLAN_NAME)'
+          - task: DownloadPipelineArtifact@2
+            displayName: Download Approved Terraform Plan
+            inputs:
+              artifact: terraform-plan
+              path: '$(Pipeline.Workspace)/terraform-plan'
+
+          - task: TerraformTask@5
+            displayName: Apply Approved Terraform Plan
+            inputs:
+              provider: azurerm
+              command: apply
+              workingDirectory: '$(WORKING_DIR)'
+              environmentServiceNameAzureRM: '$(service_connection)'
+              commandOptions: '$(Pipeline.Workspace)/terraform-plan/tfplan'
+
+
+
+
+
+
+##################################################################################
+
+# trigger:
+#   none
+
+# pool:
+#   vmImage: ubuntu-latest
+
+# variables:
+
+#   WORKING_DIR: '$(System.DefaultWorkingDirectory)/AKS/environments/dev' 
+#   TF_VERSION: '1.15.6' 
+#   resourceGroupName: 'donotdeletemygroup' 
+#   storageAccountName: 'donotdeletemystoragebhai'
+#   containerName: 'mycontainer'
+#   backendKey: 'dev.terraform.tfstate'
+#   aksClusterName: 'sammyaks' 
+#   acrName: 'sameeracr' 
+#   acrLoginServer: 'sameeracr.azurecr.io' 
+#   imageRepository: 'microtodo-app' 
+#   imageTag: '$(Build.BuildId)' 
+#   kubernetesNamespace: 'dev'
+#   TF_PLAN_NAME: 'tfplan'
+#   service_connection: 'myazserviceconnection'
+#   subscription_id: '1b27db03-81b0-4e64-9cd9-e87934f35ca4'
+#   INFRACOST_API_KEY: 'ico-nZLVnsskPMmX9DG56f27NWu6b8a5lbfr'
+
+
+
+# stages:
+#   - stage: securityandcompliancecheck
+#     jobs:
+#       - job: SecurityScanJob
+#         displayName: Security Scan Job
+#         steps:
+#           - task: TerraformInstaller@1
+#             inputs:
+#               terraformVersion: '$(TF_VERSION)'
+
+#           - task: Bash@3
+#             displayName: 'Install TFLint'
+#             inputs:
+#               targetType: 'inline'
+#               script: |
+#                 curl -sSLO https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip
+#                 unzip -o tflint_linux_amd64.zip
+#                 sudo install -c -v tflint /usr/local/bin/ 
+
+#           - task: Bash@3
+#             displayName: 'Install Checkov'
+#             inputs:
+#               targetType: 'inline'
+#               script: |
+#                 python3 -m pip install --upgrade pip
+#                 pip3 install checkov
+
+#           - task: Gitleaks@3
+#             displayName: Gitleaks Scan
+#             continueOnError: true
+#             inputs:
+#               scanlocation: '$(System.DefaultWorkingDirectory)'
+#               configtype: 'default'
+#               reportformat: 'sarif'
+#               reportname: 'gitleaks.sarif'
+
+
+                
+#           - task: Bash@3
+#             displayName: 'Run TFLint Scan'
+#             continueOnError: true
+#             inputs:
+#               targetType: 'inline'
+#               script: |
+#                 tflint --chdir=$(System.DefaultWorkingDirectory) --recursive       
+
+#           - task: Bash@3
+#             displayName: 'Run Checkov Scan'
+#             continueOnError: true
+#             inputs:
+#               targetType: 'inline'
+#               script: |
+#                 checkov -d $(System.DefaultWorkingDirectory) \
+#                   --framework terraform \
+#                   -o junitxml > Checkov-Result.xml      
+
+#           - task: PublishTestResults@2
+#             displayName: 'Publish Checkov Results'
+#             inputs:
+#               testResultsFormat: 'JUnit'
+#               testResultsFiles: 'Checkov-Result.xml'
+#               failTaskOnFailedTests: false
+
+# # ============================================================
+# # Stage 2 - Terraform Plan
+# # ============================================================
+
+#   - stage: TerraformInitializationandPlanningStage
+#     displayName: Terraform Initialization & Planning Stage
+#     jobs:
+#       - job:  TerraformInitializationandPlanningJob
+#         displayName: Terraform Initialization & Planning Job
+#         steps:
+#           - task: TerraformInstaller@1
+#             inputs:
+#               terraformVersion: '$(TF_VERSION)'
+
+#           - task: Bash@3
+#             displayName: 'Install Infracost'
+#             inputs:
+#               targetType: 'inline'
+#               script: |
+#                 curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+#                 infracost --version               
+
+              
+#           - task: TerraformTask@5
+#             displayName: Terraform Init
+#             inputs:
+#               provider: 'azurerm'
+#               command: 'init'
+#               workingDirectory: $(WORKING_DIR)
+#               backendServiceArm: '$(service_connection)'
+#               backendAzureRmOverrideSubscriptionID: $(subscription_id)
+#               backendAzureRmResourceGroupName: '$(resourceGroupName)'
+#               backendAzureRmStorageAccountName: '$(storageAccountName)'
+#               backendAzureRmContainerName: '$(containerName)'
+#               backendAzureRmKey: '$(backendKey)'
+
+#           - task: TerraformTask@5
+#             displayName: Terraform Validate
+#             inputs:
+#               provider: 'azurerm'
+#               command: 'validate'
+#               workingDirectory: $(WORKING_DIR)
+
+#           - task: TerraformTask@5
+#             displayName: 'Terraform Plan'
+#             inputs:
+#               provider: 'azurerm'
+#               command: 'plan'
+#               workingDirectory: '$(WORKING_DIR)'
+#               environmentServiceNameAzureRM: '$(service_connection)'
+#               commandOptions: '-out=$(System.DefaultWorkingDirectory)/AKS/$(TF_PLAN_NAME)'
+
+#           - task: PublishPipelineArtifact@1
+#             displayName: 'Publish Terraform Plan Artifact'
+#             inputs:
+#               targetPath: '$(System.DefaultWorkingDirectory)/AKS/$(TF_PLAN_NAME)'
+#               artifact: 'terraform-plan'
+#               publishLocation: 'pipeline'
+
+#           - task: Bash@3
+#             displayName: 'Run Infrastructure Cost'
+#             inputs:
+#               targetType: 'inline'
+#               script: |
+#                 infracost breakdown \
+#                   --path "$(WORKING_DIR)" \
+#                   --format table
+#             env:
+#               INFRACOST_API_KEY: $(INFRACOST_API_KEY)                             
+
+# # ============================================================
+# # Stage 3 - Terraform Apply
+# # ============================================================
+
+#   - stage: TerraformApplyStage
+#     displayName: 'Terraform Infrastructure Deployment'
+#     dependsOn: TerraformInitializationandPlanningStage
+#     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+#     jobs:
+
+#     # ==========================================================
+#     # Manual Approval
+#     # ==========================================================
+#     - job: ManualApproval
+#       displayName: 'Infrastructure Change Approval'
+#       pool: server
+
+#       steps:
+#       - task: ManualValidation@0
+#         displayName: 'Review Terraform Plan'
+#         timeoutInMinutes: 1440
+#         inputs:
+#           notifyUsers: |
+#             benamikumar@gmail.com
+#           instructions: |
+#             Please review Terraform plan output and approve deployment.
+#           onTimeout: reject
+
+#     # ==========================================================
+#     # Terraform Apply
+#     # ==========================================================
+#     - job: TerraformApplyJob
+#       displayName: 'Apply Approved Infrastructure Changes'
+#       dependsOn: ManualApproval
+
+#       steps:
+
+#       - task: TerraformInstaller@1
+#         displayName: 'Install Terraform CLI'
+#         inputs:
+#           terraformVersion: $(TF_VERSION)
+
+#       - task: TerraformTask@5
+#         inputs:
+#           provider: 'azurerm'
+#           command: 'init'
+#           workingDirectory: '$(WORKING_DIR)'
+#           backendServiceArm: '$(service_connection)'
+#           backendAzureRmOverrideSubscriptionID: '712eeec0-3f6b-4702-8f88-dbfca33db4d0'
+#           backendAzureRmResourceGroupName: '$(resourceGroupName)'
+#           backendAzureRmStorageAccountName: '$(storageAccountName)'
+#           backendAzureRmContainerName: '$(containerName)'
+#           backendAzureRmKey: '$(backendKey)'
+
+#       - task: DownloadPipelineArtifact@2
+#         displayName: 'Download Terraform Plan Artifact'
+#         inputs:
+#           artifact: 'terraform-plan'
+#           path: '$(Pipeline.Workspace)/terraform-plan'
+
+#       - task: TerraformTask@5
+#         displayName: 'Apply Approved Terraform Plan'
+#         inputs:
+#           provider: 'azurerm'
+#           command: 'applyy'
+#           workingDirectory: $(WORKING_DIR)
+#           environmentServiceNameAzureRM: '$(service_connection)'
+#           commandOptions: '$(Pipeline.Workspace)/terraform-plan/$(TF_PLAN_NAME)'
 
 
 
